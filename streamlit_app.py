@@ -128,6 +128,32 @@ def main():
         
         st.divider()
         st.header("Settings")
+        
+        with st.expander("ℹ️ How expected points are calculated", expanded=False):
+            st.write("""
+            **Expected Points (xP) Formula:**
+            ```
+            xP = Form × Games Ahead × FDR_Multiplier × Position_Weight × Injury_Penalty
+            ```
+            
+            **Components:**
+            - **Form**: Player's recent form rating from FPL (higher = better)
+            - **Games Ahead**: Number of upcoming games you select (1-19)
+            - **FDR (Fixture Difficulty Rating)**: Average difficulty of next X games
+              - 1-2 (Easy) = Better bonus
+              - 3 (Neutral) = 1.0× multiplier
+              - 4-5 (Hard) = Penalty
+            - **Position Weight**: Natural scoring potential by position
+              - GKP: 0.5× (goalkeepers score less)
+              - DEF: 0.8×
+              - MID: 1.2×
+              - FWD: 1.5× (forwards score most)
+            - **Injury Penalty**: -50% if player is unavailable
+            
+            **A transfer is marked "GOOD" if:**
+            - Net Point Gain ≥ 5 points (accounts for 4-point transfer cost)
+            """)
+        
         games_ahead = st.slider(
             "Games to analyze ahead",
             min_value=1,
@@ -181,16 +207,37 @@ def main():
                     if len(transfers) > len(affordable_transfers):
                         st.info(f"({len(transfers) - len(affordable_transfers)} transfer(s) filtered out due to budget)")
                     
+                    # Get detailed analysis for both players
+                    analyzer = TransferAnalyzer(players, fixtures, games_ahead)
+                    current_player_analysis = analyzer.get_player_analysis(selected_player)
+                    
+                    # Show player comparison summary
+                    st.subheader("Player You're Replacing")
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Form", f"{current_player_analysis['form']}")
+                    with col2:
+                        st.metric("FDR (next {} games)".format(games_ahead), f"{current_player_analysis['fdr']}")
+                    with col3:
+                        st.metric("Position Weight", f"{current_player_analysis['position_weight']:.2f}x")
+                    with col4:
+                        st.metric("Expected Points", f"{current_player_analysis['xp']:.1f}")
+                    
+                    st.divider()
+                    
+                    # Build comparison table
                     df = pd.DataFrame([{
+                        "Player Out": selected_player.name,
+                        "Form Out": f"{current_player_analysis['form']}",
+                        "FDR Out": f"{current_player_analysis['fdr']}",
+                        "→": "→",
                         "Player In": t.player_in.name,
-                        "Position": t.player_in.position,
-                        "Selling Price": f"£{selected_player.price/10:.1f}m",
-                        "Buying Price": f"£{t.player_in.price/10:.1f}m",
-                        "Net Cost": f"£{(t.player_in.price - selected_player.price)/10:.1f}m",
-                        "Form": f"{t.player_in.form:.2f}",
-                        "xP (next {})".format(games_ahead): f"{t.expected_points_gain:.1f}",
+                        "Form In": f"{analyzer.get_player_analysis(t.player_in)['form']}",
+                        "FDR In": f"{analyzer.get_player_analysis(t.player_in)['fdr']}",
+                        "£ Cost": f"£{(t.player_in.price - selected_player.price)/10:.1f}m",
+                        "xP Gain": f"{t.expected_points_gain:.1f}",
                         "Net Gain": f"{t.net_point_gain:.1f}",
-                        "Recommendation": t.recommendation
+                        "Rating": t.recommendation
                     } for t in affordable_transfers])
                     
                     st.dataframe(df, use_container_width=True)
@@ -221,11 +268,15 @@ def main():
                 
                 df = pd.DataFrame([{
                     "Player Out": out.name,
+                    "Out Form": f"{analyzer.get_player_analysis(out)['form']}",
+                    "Out FDR": f"{analyzer.get_player_analysis(out)['fdr']}",
+                    "→": "→",
                     "Player In": t.player_in.name,
-                    "Position": t.player_in.position,
-                    "Net Cost": f"£{(t.player_in.price - out.price)/10:.1f}m",
+                    "In Form": f"{analyzer.get_player_analysis(t.player_in)['form']}",
+                    "In FDR": f"{analyzer.get_player_analysis(t.player_in)['fdr']}",
+                    "£ Cost": f"£{(t.player_in.price - out.price)/10:.1f}m",
                     "xP Gain": f"{t.expected_points_gain:.1f}",
-                    "Net Gain": f"{t.net_point_gain:.1f}",
+                    "Net Gain (pts)": f"{t.net_point_gain:.1f}",
                 } for out, t in all_transfers])
                 
                 st.dataframe(df, use_container_width=True)
