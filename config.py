@@ -4,7 +4,7 @@
 FPL_API_BASE_URL = "https://fantasy.premierleague.com/api"
 
 # Transfer analysis parameters
-DEFAULT_GAMES_AHEAD = 8  # Number of games to look ahead for xP calculation
+DEFAULT_GAMES_AHEAD = 5  # Number of games to look ahead for xP calculation
 MIN_POINT_GAIN = 5  # Minimum point gain needed to justify a transfer (accounts for transfer cost)
 TRANSFER_COST = 4  # Points deducted for a transfer
 
