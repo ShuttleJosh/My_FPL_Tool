@@ -77,6 +77,29 @@ class FPLAPIClient:
         """Fetch historical data for a specific player"""
         return self._get(f"/element/{player_id}/")
 
+    def get_manager_team(self, manager_id: int) -> Optional[List[int]]:
+        """Fetch a manager's current team (list of player IDs)"""
+        # First get manager info to find the current gameweek
+        manager_data = self._get(f"/entry/{manager_id}/")
+        if not manager_data:
+            return None
+        
+        # Get current gameweek from manager data
+        current_event = manager_data.get("current_event")
+        if not current_event:
+            return None
+        
+        # Get picks for current gameweek
+        picks_data = self._get(f"/entry/{manager_id}/event/{current_event}/picks/")
+        if not picks_data:
+            return None
+        
+        picks = picks_data.get("picks", [])
+        if picks:
+            return [pick["element"] for pick in picks]
+        
+        return None
+
     @staticmethod
     def _get_position(position_id: int) -> str:
         """Convert FPL position ID to position string"""

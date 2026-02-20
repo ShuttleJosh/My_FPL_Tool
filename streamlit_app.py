@@ -24,8 +24,109 @@ def main():
     st.title("⚽ FPL Transfer Analyzer")
     st.markdown("Smart transfer recommendations based on expected points and fixture difficulty")
 
+    # Load data
+    players, fixtures = load_data()
+
+    if not players:
+        st.error("Failed to fetch FPL data. Please check your internet connection.")
+        return
+
     # Sidebar configuration
     with st.sidebar:
+        st.header("Your Squad")
+        
+        # FPL squad structure: 2 GK, 5 DEF, 5 MID, 3 FWD
+        squad_positions = ["GKP", "GKP", "DEF", "DEF", "DEF", "DEF", "DEF", "MID", "MID", "MID", "MID", "MID", "FWD", "FWD", "FWD"]
+        
+        # Option to load from FPL manager ID
+        st.subheader("Load Your Team")
+        manager_id = st.number_input(
+            "Enter your FPL Manager ID (optional)",
+            min_value=0,
+            help="Find this in your FPL profile URL (https://fantasy.premierleague.com/entry/[MANAGER_ID]/)"
+        )
+        
+        if manager_id > 0 and st.button("Load My Team"):
+            with st.spinner("Fetching your FPL team..."):
+                client = FPLAPIClient()
+                player_ids = client.get_manager_team(manager_id)
+                client.close()
+                
+                if player_ids:
+                    # Map player IDs to Player objects
+                    fetched_players = [p for p in players if p.id in player_ids]
+                    
+                    if fetched_players:
+                        # Organize fetched players by position
+                        players_by_position = {}
+                        for p in fetched_players:
+                            if p.position not in players_by_position:
+                                players_by_position[p.position] = []
+                            players_by_position[p.position].append(p)
+                        
+                        # Assign players to squad slots by position
+                        auto_filled_players = []
+                        position_indices = {}
+                        for i, position in enumerate(squad_positions):
+                            if position not in position_indices:
+                                position_indices[position] = 0
+                            
+                            if position in players_by_position and position_indices[position] < len(players_by_position[position]):
+                                selected_player = players_by_position[position][position_indices[position]]
+                                auto_filled_players.append(selected_player)
+                                # Store in session state with the selectbox key
+                                st.session_state[f"squad_player_{i}"] = selected_player
+                                position_indices[position] += 1
+                            else:
+                                auto_filled_players.append(None)
+                        
+                        st.success(f"Loaded {len(fetched_players)} players from your team!")
+                    else:
+                        st.error("Could not match fetched players to current data.")
+                else:
+                    st.error("Could not fetch your team. Check your Manager ID is correct.")
+        
+        # Build current squad
+        current_squad = []
+        squad_values = []
+        
+        st.subheader("Select Players")
+        
+        for i, position in enumerate(squad_positions):
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                # Filter players by position
+                available_players = [p for p in players if p.position == position]
+                
+                # Initialize session state for this player slot if not exists
+                if f"squad_player_{i}" not in st.session_state:
+                    st.session_state[f"squad_player_{i}"] = available_players[0] if available_players else None
+                
+                player = st.selectbox(                
+                    f"{position}",
+                    options=available_players,
+                    key=f"squad_player_{i}",
+                    format_func=lambda p: f"{p.name} - £{p.price/10:.1f}m"
+                )
+                if player:
+                    current_squad.append(player)
+                    squad_values.append(player.price)
+        
+        # Calculate budget
+        total_squad_value = sum(squad_values) if squad_values else 0
+        budget = 1000 - total_squad_value  # FPL budget is 100m = 1000 x 0.1m
+        
+        st.divider()
+        st.subheader("Budget")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Squad Value", f"£{total_squad_value/10:.1f}m")
+        with col2:
+            st.metric("Available Budget", f"£{budget/10:.1f}m")
+        with col3:
+            st.metric("Players", f"{len(current_squad)}/15")
+        
+        st.divider()
         st.header("Settings")
         games_ahead = st.slider(
             "Games to analyze ahead",
@@ -42,62 +143,94 @@ def main():
             help="Minimum expected point gain to recommend a transfer"
         )
 
-    # Load data
-    players, fixtures = load_data()
-
-    if not players:
-        st.error("Failed to fetch FPL data. Please check your internet connection.")
-        return
-
     # Create tabs
     tab1, tab2, tab3 = st.tabs(["Quick Analysis", "Squad Transfer Plan", "Player Comparison"])
 
     with tab1:
         st.header("Quick Transfer Analysis")
         
-        col1, col2 = st.columns(2)
-        with col1:
-            selected_player = st.selectbox(
-                "Select player to replace",
-                options=players,
-                format_func=lambda p: f"{p.name} ({p.position}) - £{p.price/10:.1f}m"
-            )
-        
-        with col2:
-            position_filter = st.checkbox("Same position only", value=True)
+        if not current_squad:
+            st.warning("Please select your current squad in the sidebar first.")
+        else:
+            col1, col2 = st.columns(2)
+            with col1:
+                selected_player = st.selectbox(
+                    "Select player to replace (from your squad)",
+                    options=current_squad,
+                    format_func=lambda p: f"{p.name} ({p.position}) - £{p.price/10:.1f}m"
+                )
+            
+            with col2:
+                position_filter = st.checkbox("Same position only", value=True)
 
-        if selected_player:
-            analyzer = TransferAnalyzer(players, fixtures, games_ahead)
-            transfers = analyzer.find_smart_transfers(
-                selected_player,
-                position=selected_player.position if position_filter else None
-            )
+            if selected_player:
+                analyzer = TransferAnalyzer(players, fixtures, games_ahead)
+                transfers = analyzer.find_smart_transfers(
+                    selected_player,
+                    position=selected_player.position if position_filter else None
+                )
 
-            if transfers:
-                st.success(f"Found {len(transfers)} smart transfer(s)")
-                
-                df = pd.DataFrame([{
-                    "Player In": t.player_in.name,
-                    "Position": t.player_in.position,
-                    "Price": f"£{t.player_in.price/10:.1f}m",
-                    "Form": f"{t.player_in.form:.2f}",
-                    "xP (next {})".format(games_ahead): f"{t.expected_points_gain:.1f}",
-                    "Net Gain": f"{t.net_point_gain:.1f}",
-                    "Recommendation": t.recommendation
-                } for t in transfers])
-                
-                st.dataframe(df, use_container_width=True)
-            else:
-                st.info("No smart transfers found for this player.")
+                # Filter by budget
+                affordable_transfers = [
+                    t for t in transfers 
+                    if (t.player_in.price - selected_player.price) <= budget
+                ]
+
+                if affordable_transfers:
+                    st.success(f"Found {len(affordable_transfers)} affordable transfer(s)")
+                    if len(transfers) > len(affordable_transfers):
+                        st.info(f"({len(transfers) - len(affordable_transfers)} transfer(s) filtered out due to budget)")
+                    
+                    df = pd.DataFrame([{
+                        "Player In": t.player_in.name,
+                        "Position": t.player_in.position,
+                        "Selling Price": f"£{selected_player.price/10:.1f}m",
+                        "Buying Price": f"£{t.player_in.price/10:.1f}m",
+                        "Net Cost": f"£{(t.player_in.price - selected_player.price)/10:.1f}m",
+                        "Form": f"{t.player_in.form:.2f}",
+                        "xP (next {})".format(games_ahead): f"{t.expected_points_gain:.1f}",
+                        "Net Gain": f"{t.net_point_gain:.1f}",
+                        "Recommendation": t.recommendation
+                    } for t in affordable_transfers])
+                    
+                    st.dataframe(df, use_container_width=True)
+                else:
+                    if len(transfers) > 0:
+                        st.warning(f"No transfers within your budget of £{budget/10:.1f}m. Found {len(transfers)} matches outside budget.")
+                    else:
+                        st.info("No smart transfers found for this player.")
 
     with tab2:
         st.header("Full Squad Transfer Plan")
-        st.info("Upload your squad details (or we can auto-detect once login is implemented)")
         
-        # Placeholder for squad management
-        col1, col2 = st.columns(2)
-        with col1:
-            squad_size = st.number_input("Squad size", value=15, min_value=11, max_value=15)
+        if not current_squad:
+            st.warning("Please select your current squad in the sidebar first.")
+        else:
+            st.info(f"Analyzing transfer plan for {len(current_squad)} players with £{budget/10:.1f}m budget")
+            
+            analyzer = TransferAnalyzer(players, fixtures, games_ahead)
+            all_transfers = []
+            
+            for player in current_squad:
+                transfers = analyzer.find_smart_transfers(player)
+                affordable = [t for t in transfers if (t.player_in.price - player.price) <= budget]
+                all_transfers.extend([(player, t) for t in affordable])
+            
+            if all_transfers:
+                st.success(f"Found {len(all_transfers)} affordable transfer option(s)")
+                
+                df = pd.DataFrame([{
+                    "Player Out": out.name,
+                    "Player In": t.player_in.name,
+                    "Position": t.player_in.position,
+                    "Net Cost": f"£{(t.player_in.price - out.price)/10:.1f}m",
+                    "xP Gain": f"{t.expected_points_gain:.1f}",
+                    "Net Gain": f"{t.net_point_gain:.1f}",
+                } for out, t in all_transfers])
+                
+                st.dataframe(df, use_container_width=True)
+            else:
+                st.info("No smart transfers found within your budget for any squad players.")
 
     with tab3:
         st.header("Player Comparison")
